@@ -4,18 +4,18 @@ import torch
 from agent.resnet import resnet50
 import numpy as np
 
-class DQN(nn.Module):
-    def __init__(self):
-        super(DQN, self).__init__()
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=5, stride=2)
-        self.bn1 = nn.BatchNorm2d(16)
+class DQN(nn.Module):   #一个继承自 torch.nn.Module 的神经网络类 #这个类的目标是实现一个将图像输入（state）映射为动作值（Q-values）的网络
+    def __init__(self): #初始化父类 nn.Module
+        super(DQN, self).__init__() #super(DQN, self).__init__() 是标准写法，让 nn.Module 正确初始化。
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=5, stride=2) # conv1: 卷积层，输入是 RGB 图像（通道数 3），输出通道数是 16。	kernel_size=5: 卷积核大小 5x5。stride=2: 步长为 2，意味着图像尺寸会缩小。
+        self.bn1 = nn.BatchNorm2d(16)    #bn1: 对 conv1 的输出做 Batch Normalization，加速收敛、提高稳定性。
         self.conv2 = nn.Conv2d(16, 32, kernel_size=5, stride=2)
         self.bn2 = nn.BatchNorm2d(32)
         self.conv3 = nn.Conv2d(32, 32, kernel_size=5, stride=2)
         self.bn3 = nn.BatchNorm2d(32)
-        self.head = nn.Linear(448, 2)
+        self.head = nn.Linear(448, 2)  #输出层（全连接层）接收卷积层的输出展平后作为输入。448 是根据输入图像尺寸计算出的展平后的向量长度 ### 输出是 2 表示：有两个动作的 Q 值（比如向左、向右）
 
-    def forward(self, x):
+    def forward(self, x): #输入 x 是一个 batch 的图像张量，形状如 [batch_size, 3, H, W]。
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
         x = F.relu(self.bn3(self.conv3(x)))
