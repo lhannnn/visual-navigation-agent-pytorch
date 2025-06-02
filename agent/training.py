@@ -165,16 +165,18 @@ class TrainingOptimizer:
 #6. 把 local 梯度传给 shared 参数
 #7. 优化器 step，更新 shared 参数
 
-class AnnealingLRScheduler(torch.optim.lr_scheduler._LRScheduler):
+class AnnealingLRScheduler(torch.optim.lr_scheduler._LRScheduler): #定义了一个新类，继承自 PyTorch 的 “_LRScheduler”。这是 PyTorch 中所有学习率调度器的父类。 #目的就是实现学习率衰减的功能，因为原来的父类“_LRScheduler”，没有学习率衰减的功能
     def __init__(self, optimizer, total_epochs, last_epoch=-1):
-        self.optimizer = optimizer
+      #这里初始化self.optimizer,self.last_epoch,self.total_epochs就是为了下面的get_lf函数做准备的
+        self.optimizer = optimizer #调度其学习率的优化器（如 SGD、Adam）
         self.last_epoch = last_epoch
         self.total_epochs = total_epochs
-        super(AnnealingLRScheduler, self).__init__(optimizer, last_epoch)
-
+        super(AnnealingLRScheduler, self).__init__(optimizer, last_epoch) #调用 父类 _LRScheduler 的初始化方法。
+                                                                          #为什么要传 optimizer, last_epoch？因为 PyTorch 的 _LRScheduler 的构造函数是这样的：def __init__(self, optimizer, last_epoch=-1):
     def get_lr(self):
-        return [base_lr * (1.0 - self.last_epoch / self.total_epochs)
-                for base_lr in self.base_lrs]
+        return [base_lr * (1.0 - self.last_epoch / self.total_epochs)   #计算当前 epoch（训练轮次）下的学习率，用的是一种简单的线性衰减策略（linear annealing）
+                for base_lr in self.base_lrs]    #self.base_lrs: 是一个列表，保存了每个参数组的初始学习率（由 optimizer 提供）
+                            #self.last_epoch: 当前是第几个 epoch。每次 scheduler.step() 被调用时，它会加 1
 
 class Training:
     def __init__(self, device, config):
