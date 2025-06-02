@@ -91,53 +91,79 @@ class TrainingOptimizer:
         self.global_step = torch.tensor(0) #初始化一个训练的全局步数计数器，类型为 PyTorch 的张量（torch.tensor），可以用于记录当前优化了多少步
         self.lock = mp.Lock() # mp 是 Python 的多进程模块 multiprocessing。这个锁是为了在多线程或多进程训练中，保护对共享资源（如 global_step、模型参数）的访问，防止数据冲突。
 
-    def state_dict(self):
-        state_dict = dict()
-        state_dict['optimizer'] = self.optimizer.state_dict()
+    def state_dict(self): #这个 state_dict() 方法的作用是 将当前优化器、调度器、训练步数打包成一个字典，用于保存或恢复训练状态。
+        state_dict = dict() #创建一个空的字典
+        state_dict['optimizer'] = self.optimizer.state_dict() #把它的参数（如每一层的动量、学习率、自适应项等）保存下来
         state_dict['scheduler'] = self.scheduler.state_dict()
         state_dict["global_step"] = self.global_step
         return state_dict
 
     def share_memory(self):
-        self.global_step.share_memory_()
+        self.global_step.share_memory_() #是用来 将 global_step 放入共享内存（shared memory）中，使得多个进程（processes）之间都可以访问和修改它，而不是各自复制一份。它通常用于 多进程训练 中的进度同步
 
     def load_state_dict(self, state_dict):
-        self.optimizer.load_state_dict(state_dict['optimizer'])
-        self.scheduler.load_state_dict(state_dict['scheduler'])
+        self.optimizer.load_state_dict(state_dict['optimizer']) #从 state_dict 中取出保存的优化器状态（比如动量、历史梯度等），加载回当前的 optimizer 对象中。
+        self.scheduler.load_state_dict(state_dict['scheduler']) 
         self.global_step.copy_(state_dict['global_step'])
     
     def get_global_step(self):
-        return self.global_step.item()
+        return self.global_step.item() #.item() 方法是 PyTorch 中的函数，用来从只包含一个元素的张量中提取出 Python 标量值（如 int 或 float）
 
         
-    def _ensure_shared_grads(self, local_params, shared_params):
-        for param, shared_param in zip(local_params, shared_params):
-            if shared_param.grad is not None:
+    def _ensure_shared_grads(self, local_params, shared_params): #一个私有方法（以下划线开头通常表示“仅供内部使用”）
+        for param, shared_param in zip(local_params, shared_params): #zip() 同时迭代两个参数列表中的每对参数
+            if shared_param.grad is not None: #如果共享模型的这个参数已经有梯度了，就直接退出整个函数，不再处理其他参数。 这通常表示这个共享模型的梯度已经被其他进程同步过了，不需要重复。
                 return
-            shared_param._grad = param.grad
+            shared_param._grad = param.grad #如果共享模型的参数还没有梯度，就把本地模型的梯度复制过去。
+            #注意使用的是 _grad（带下划线），这是 PyTorch 中的一个 内部属性，允许你手动设置梯度。
+            #PyTorch 默认情况下不能跨进程自动同步梯度，所以必须 手动赋值梯度，这正是这个函数的作用。
 
-    def optimize(self, loss, local_params, shared_params):
+  #为什么要这么做？
+  #在使用多进程训练（如 A3C）时，每个进程都有一份“本地模型”，但训练时会：
+  #使用 本地模型与环境交互
+  #将 本地计算出的梯度同步到共享模型
+  #最终用共享模型参数做优化（即参数更新）
+
+    def optimize(self, loss, local_params, shared_params):  
         local_params = list(local_params)
         shared_params = list(shared_params)
 
         # Fix the optimizer property after unpickling
-        self.scheduler.optimizer = self.optimizer
-        self.scheduler.step(self.global_step.item())
+        self.scheduler.optimizer = self.optimizer #scheduler 是一个对象，它本身内部就有一个属性叫 optimizer，代表它控制的是哪个优化器。
+        self.scheduler.step(self.global_step.item()) #scheduler.step(step_number) 是在告诉调度器：“我现在已经训练到第 step_number 步了，你根据这个步数来决定当前学习率是多少。”
+      #有些学习率调度器是根据训练的步数（或 epoch）来决定学习率的：scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda step: 0.95 ** step)
+      #那么每走一步，学习率就变成原来的 0.95 倍。
+      #所以上面这句话的意思是“我现在训练到了第 N 步，帮我调整学习率。”
+      
+      #什么是scheduler
+        #scheduler 全称叫 学习率调度器（learning rate scheduler），是 PyTorch 中用于 自动调整学习率 的模块。
+        #它的作用：在训练过程中，动态地改变学习率，从而加快收敛、避免震荡、提升最终精度。
+        #scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1) 这表示：每训练 10 个 epoch，把学习率缩小为原来的 0.1 倍。
+
+
 
         # Increment step
-        with self.lock:
-            self.global_step.copy_(torch.tensor(self.global_step.item() + 1))
+        with self.lock:  #使用多进程锁 self.lock，避免多个进程同时写 global_step。
+            self.global_step.copy_(torch.tensor(self.global_step.item() + 1)) #读取当前 global_step，加一，再写回去。
             
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad() #清除旧的梯度，防止累积。
 
         # Calculate the new gradient with the respect to the local network
-        loss.backward()
+        loss.backward() #反向传播，计算梯度
 
         # Clip gradient
-        torch.nn.utils.clip_grad_norm_(local_params, self.grad_norm)
+        torch.nn.utils.clip_grad_norm_(local_params, self.grad_norm) #	进行梯度裁剪（clip gradient），防止梯度爆炸。 	# 如果梯度 L2 范数超过 self.grad_norm（比如 40.0），就缩放下来
             
-        self._ensure_shared_grads(local_params, shared_params)
-        self.optimizer.step()
+        self._ensure_shared_grads(local_params, shared_params) #把本地参数的 .grad 复制到共享参数 .grad 上。
+        self.optimizer.step() #用共享模型的梯度更新参数，完成梯度下降。
+
+#1. 准备参数列表
+#2. 调整调度器
+#3. 用锁同步 global_step++
+#4. 反向传播得到 local 梯度
+#5. 梯度裁剪（clip）
+#6. 把 local 梯度传给 shared 参数
+#7. 优化器 step，更新 shared 参数
 
 class AnnealingLRScheduler(torch.optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, total_epochs, last_epoch=-1):
