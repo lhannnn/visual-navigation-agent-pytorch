@@ -179,49 +179,53 @@ class AnnealingLRScheduler(torch.optim.lr_scheduler._LRScheduler): #定义了一
                             #self.last_epoch: 当前是第几个 epoch。每次 scheduler.step() 被调用时，它会加 1
 
 class Training:
-    def __init__(self, device, config):
+    def __init__(self, device, config): #从配置中读取各种训练参数，并进行初始化准备
         self.device = device
         self.config = config
-        self.logger : logging.Logger = self._init_logger()
+        self.logger : logging.Logger = self._init_logger()   #self._init_logger() 是一个私有方法，用来初始化日志记录器（写日志到控制台或文件，方便调试和记录训练过程）。
         self.learning_rate = config.get('learning_rate')
-        self.rmsp_alpha = config.get('rmsp_alpha')
-        self.rmsp_epsilon = config.get('rmsp_epsilon')
-        self.grad_norm = config.get('grad_norm', 40.0)
+        self.rmsp_alpha = config.get('rmsp_alpha') #rmsp_alpha: RMSprop 优化器的 alpha 参数（控制平方梯度的平均）。
+        self.rmsp_epsilon = config.get('rmsp_epsilon') #rmsp_alpha: RMSprop 优化器的 alpha 参数（控制平方梯度的平均）。
+        self.grad_norm = config.get('grad_norm', 40.0) 
         self.tasks = config.get('tasks', TASK_LIST)
         self.checkpoint_path = config.get('checkpoint_path', 'model/checkpoint-{checkpoint}.pth')
-        self.max_t = config.get('max_t', 5)
+        self.max_t = config.get('max_t', 5)  #每次 rollout 的最大步数（动作的时间步长度），默认是 5。
         self.total_epochs = TOTAL_PROCESSED_FRAMES // self.max_t
         self.initialize()
 
-    @staticmethod
-    def load_checkpoint(config, fail = True):
+    @staticmethod   #@staticmethod：说明这个方法不依赖类的实例（self），可以通过 Training.load_checkpoint(...) 直接调用
+    def load_checkpoint(config, fail = True):  #	fail=True：是否在找不到 checkpoint 时报错（True 表示报错；False 表示返回 None）
         device = torch.device('cpu')
-        checkpoint_path = config.get('checkpoint_path', 'model/checkpoint-{checkpoint}.pth')
+        checkpoint_path = config.get('checkpoint_path', 'model/checkpoint-{checkpoint}.pth') 
         max_t = config.get('max_t', 5)
         total_epochs = TOTAL_PROCESSED_FRAMES // max_t
-        files = os.listdir(os.path.dirname(checkpoint_path))
-        base_name = os.path.basename(checkpoint_path)
+        files = os.listdir(os.path.dirname(checkpoint_path)) #获取 checkpoint 目录下的所有文件名
+        base_name = os.path.basename(checkpoint_path) #获取文件模板名，如 checkpoint-{checkpoint}.pth
         
         # Find latest checkpoint
         # TODO: improve speed
         restore_point = None
-        if base_name.find('{checkpoint}') != -1:
-            regex = re.escape(base_name).replace(re.escape('{checkpoint}'), '(\d+)')
-            points = [(fname, int(match.group(1))) for (fname, match) in ((fname, re.match(regex, fname),) for fname in files) if not match is None]
+        if base_name.find('{checkpoint}') != -1: #判断 base_name 这个字符串中是否包含子字符串 "{checkpoint}"。如果找到，返回它的起始位置；如果找不到，返回 -1
+            regex = re.escape(base_name).replace(re.escape('{checkpoint}'), '(\d+)')   #re.escape('{checkpoint}')  → '\\{checkpoint\\}'   #regex = 'checkpoint\\-(\\d+)\\.pth'
+            points = [(fname, int(match.group(1))) for (fname, match) in ((fname, re.match(regex, fname),) for fname in files) if not match is None] #在给定目录下的所有文件中，找出文件名匹配 regex（比如 checkpoint-xxxxx.pth）的那些，并提取出其中的数字（即 checkpoint 的编号）。
             if len(points) == 0:
                 if fail:
                     raise Exception('Restore point not found')
                 else: return None
             
-            (base_name, restore_point) = max(points, key = lambda x: x[1])
+            (base_name, restore_point) = max(points, key = lambda x: x[1])   #找出 checkpoint 数字最大的那个文件，即“最新的模型”
 
             
-        print(f'Restoring from checkpoint {restore_point}')
+        print(f'Restoring from checkpoint {restore_point}') #这行是打印信息，告诉你当前从哪个 checkpoint 文件（如 checkpoint-200000.pth）中恢复。
         state = torch.load(open(os.path.join(os.path.dirname(checkpoint_path), base_name), 'rb'))
-        training = Training(device, state['config'] if 'config' in state else config)
-        training.saver.restore(state) 
+      #os.path.dirname(checkpoint_path)：获取路径中不含文件名的部分（即目录名） 
+      # os.path.join(...)：拼接目录路径和文件名 base_name，得到完整路径
+     # open(..., 'rb')：以二进制只读模式打开该 .pth 文件。
+   # torch.load(...)：用 PyTorch 加载保存的模型/训练状态字典，返回的是一个 dict 类型。
+        training = Training(device, state['config'] if 'config' in state else config) #这里会调用 Training.__init__() 方法初始化一个新的训练对象。
+        training.saver.restore(state)  #这里会调用 Training.__init__() 方法初始化一个新的训练对象。
         print('Configuration')
-        training.saver.print_config(offset = 4)       
+        training.saver.print_config(offset = 4)       #training.saver.print_config(offset = 4)
         return training
 
     def initialize(self):
