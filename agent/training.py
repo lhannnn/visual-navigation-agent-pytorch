@@ -231,7 +231,7 @@ class Training:
     def initialize(self):
         # Shared network
         self.shared_network = SharedNetwork()
-        self.scene_networks = { key:SceneSpecificNetwork(4) for key in TASK_LIST.keys() }
+        self.scene_networks = { key:SceneSpecificNetwork(4) for key in TASK_LIST.keys() } #对 TASK_LIST 中的每一个任务 key，创建一个 SceneSpecificNetwork 的实例，并传入参数 4，放入字典中。
 
         # Share memory
         self.shared_network.share_memory()
@@ -239,18 +239,18 @@ class Training:
             net.share_memory()
 
         # Callect all parameters from all networks
-        parameters = list(self.shared_network.parameters())
-        for net in self.scene_networks.values():
-            parameters.extend(net.parameters())
+        parameters = list(self.shared_network.parameters()) # 把共享网络参数放到列表里
+        for net in self.scene_networks.values():         
+            parameters.extend(net.parameters()) # 把每个场景网络的参数一个一个添加进parameters列表
 
         # Create optimizer
-        optimizer = SharedRMSprop(parameters, eps=self.rmsp_epsilon, alpha=self.rmsp_alpha, lr=self.learning_rate)
+        optimizer = SharedRMSprop(parameters, eps=self.rmsp_epsilon, alpha=self.rmsp_alpha, lr=self.learning_rate) #用 RMSprop 优化器来训练所有网络
         optimizer.share_memory()
 
         # Create scheduler
         scheduler = AnnealingLRScheduler(optimizer, self.total_epochs)
 
-        # Create optimizer wrapper
+        # Create optimizer wrapper     #把优化器和调度器封装到一个 TrainingOptimizer 类中
         optimizer_wrapper = TrainingOptimizer(self.grad_norm, optimizer, scheduler)
         self.optimizer = optimizer_wrapper
         optimizer_wrapper.share_memory()
@@ -259,15 +259,15 @@ class Training:
         self.saver = TrainingSaver(self.shared_network, self.scene_networks, self.optimizer, self.config)
     
     def run(self):
-        self.logger.info("Training started")
+        self.logger.info("Training started") #记录一条日志，说明训练已经开始。这是为了调试和监控用的。
 
         # Prepare threads
-        branches = [(scene, int(target)) for scene in TASK_LIST.keys() for target in TASK_LIST.get(scene)]
-        def _createThread(id, task):
-            (scene, target) = task
-            net = nn.Sequential(self.shared_network, self.scene_networks[scene])
+        branches = [(scene, int(target)) for scene in TASK_LIST.keys() for target in TASK_LIST.get(scene)] #生成一个任务列表，每个任务是一个 (scene, target) 的元组
+        def _createThread(id, task): #id：这个线程的编号（用于日志标识等）。 #task：一个元组 (scene, target)，表示这个线程要训练的场景和目标任务
+            (scene, target) = task #将传入的任务元组 task 拆开
+            net = nn.Sequential(self.shared_network, self.scene_networks[scene]) 把共享网络和特定场景的网络串联成一个完整的前向计算模型
             net.share_memory()
-            return TrainingThread(
+            return TrainingThread( #将所有准备好的组件传入 TrainingThread 类，构造一个训练线程对象：
                 id = id,
                 optimizer = self.optimizer,
                 network = net,
@@ -277,14 +277,14 @@ class Training:
                 terminal_state_id = target,
                 **self.config)
 
-        self.threads = [_createThread(i, task) for i, task in enumerate(branches)]
+        self.threads = [_createThread(i, task) for i, task in enumerate(branches)] #为每个 (scene, target) 任务创建一个线程，共享同一个优化器和保存器。
         
-        try:
-            for thread in self.threads:
-                thread.start()
+        try:   #尝试执行 try 代码块中的操作，如果过程中发生了 KeyboardInterrupt（即用户按了 Ctrl+C 中断程序），就会跳转到 except。
+            for thread in self.threads: #self.threads 是一个 TrainingThread 实例列表
+                thread.start()   #启动每个线程，
 
-            for thread in self.threads:
-                thread.join()
+            for thread in self.threads:  
+                thread.join()   #join() 的作用是：等待该线程执行完毕。 程序会阻塞在这里，直到所有训练线程都运行结束（正常停止）才会继续往下执行。
         except KeyboardInterrupt:
             # we will save the training
             print('Saving training session')
@@ -292,7 +292,7 @@ class Training:
         
 
     def _init_logger(self):
-        logger = logging.getLogger('agent')
-        logger.setLevel(logging.INFO)
-        logger.addHandler(logging.StreamHandler(sys.stdout))
+        logger = logging.getLogger('agent') #logging.getLogger('agent') 会获取一个名为 'agent' 的 logger 实例。## 'agent' 是 logger 的名字，你可以把它理解为给日志打的标签。
+        logger.setLevel(logging.INFO) #设置日志级别为 INFO，表示只输出 INFO（信息）WARNING（警告）ERROR（错误）CRITICAL（严重错误）	不会输出 DEBUG（调试）级别的消息。这可以控制日志输出的详细程度。
+        logger.addHandler(logging.StreamHandler(sys.stdout)) #添加一个日志处理器：StreamHandler。 StreamHandler(sys.stdout) 表示：将日志信息输出到 终端控制台（标准输出），即你平时运行程序时看到的黑框里。
         return logger
